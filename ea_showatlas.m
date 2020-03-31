@@ -252,7 +252,10 @@ for nativemni=nm % switch between native and mni space atlases.
                             ea_stats.conmat_inside_vox{el,side}(:,atlas)=D;
                         end
                     catch
-                        warning('Statistics for tract atlas parts are not implemented yet.');
+                        % Warn once
+                        warning('LEADDBS:AtlasStatisticsNotImplemented', ...
+                            'Statistics for tract atlas parts are not implemented yet.');
+                        warning('off','LEADDBS:AtlasStatisticsNotImplemented');
                     end
                 end
 
