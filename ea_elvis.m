@@ -100,17 +100,11 @@ axis fill
 %% Patient specific part (skipped if no patient is selected or no reco available):
 if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty viewer
     if exist([options.root,options.patientname,filesep,'ea_reconstruction.mat'],'file') || nargin>1
+        % Build elstruct to hold DBS lead reconstruction, 1 per patient.
         if nargin>1
             multiplemode=1;
-
-            % mer development
-%             if isstruct(varargin{2})
-%                 elstruct=varargin{2}.elstruct;
-%                 merstruct=varargin{2}.merstruct;
-%             else
-                elstruct=varargin{2};
-%             end
-
+            elstruct=varargin{2};
+            
             if options.d3.mirrorsides
                 elstruct=ea_mirrorsides(elstruct);
                 try options.d3.isomatrix=ea_mirrorsides(options.d3.isomatrix); end
@@ -128,10 +122,10 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
             elstruct(1).markers=markers;
             clear coords_mm trajectory
         end
-
-        elSide = cell(1, length(elstruct));
+        
+        % Visualize DBS leads
+        ptLeads = cell(1, length(elstruct));
         for pt=1:length(elstruct)
-            % show electrodes..
             popts=options;
             if strcmp(options.leadprod,'group')
                 try
@@ -147,11 +141,13 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
                 directory=[options.root,options.patientname,filesep];
             end
 
-            elSide{pt}=popts.sides;
+            ptLeads{pt}=popts.sides;
 
-            for side=elSide{pt}
+            % For each DBS lead (usually max 2 per patient)
+            for pt_lead=ptLeads{pt}
+                % Build pobj <-- TOOD: Make an instance of ea_trajectory
                 try
-                    pobj=ea_load_electrode(directory,side);
+                    pobj=ea_load_electrode(directory,pt_lead);
                     pobj.hasPlanning=1;
                     pobj.showPlanning=strcmp(options.leadprod,'or');
                 end
@@ -159,7 +155,7 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
                 pobj.options=popts;
                 pobj.elstruct=elstruct(pt);
                 pobj.showMacro=1;
-                pobj.side=side;
+                pobj.side=pt_lead;
 
                 set(0,'CurrentFigure',resultfig);
                 if exist('el_render','var')
@@ -176,31 +172,21 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
                     end
                 end
             end
-            if ~multiplemode
-                d=load([directory,'ea_reconstruction.mat']);
-                plans=d.reco.electrode(side+1:end);
-                if ~isempty(plans)
-                    if isfield(plans,'plan')
-                        for plan=1:length(plans)
-                            pobj=ea_load_electrode(directory,side+plan);
-                            ea_add_trajectory([],[],options,pobj);
-                        end
-                    end
-                end
-            end
-            if options.d3.elrendering==1 && options.d3.exportBB % export vizstruct for lateron export to JSON file / Brainbrowser.
-               % this part for brainbrowser support.
-               vizstruct=struct('faces',[],'vertices',[],'colors',[]);
+            
+            % export vizstruct for lateron export to JSON file / Brainbrowser.
+            if options.d3.elrendering==1 && options.d3.exportBB
+                % this part for brainbrowser support.
+                vizstruct=struct('faces',[],'vertices',[],'colors',[]);
 
-               cnt=1;
-                for side=1:length(options.sides)
-                    extract=1:length(el_render(side).elpatch);
+                cnt=1;
+                for lead_ix=1:length(options.sides)
+                    extract=1:length(el_render(lead_ix).elpatch);
                     for ex=extract
-                        tp=el_render(side).elpatch(ex);
+                        tp=el_render(lead_ix).elpatch(ex);
 
                         try % works only in ML 2015
-                            tr=triangulation(get(el_render(side).elpatch(ex),'Faces'),...
-                                get(el_render(side).elpatch(ex),'Vertices'));
+                            tr=triangulation(get(el_render(lead_ix).elpatch(ex),'Faces'),...
+                                get(el_render(lead_ix).elpatch(ex),'Vertices'));
                             vizstruct(cnt).normals = vertexNormal(tr);
                         catch % workaround for older versions..
                             vizstruct(cnt).normals=get(tp,'VertexNormals')*-1;
@@ -208,7 +194,7 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
 
                         vizstruct(cnt).faces=get(tp,'Faces');
                         vizstruct(cnt).vertices=get(tp,'Vertices');
-                        scolor=get(el_render(side).elpatch(ex),'FaceVertexCData');
+                        scolor=get(el_render(lead_ix).elpatch(ex),'FaceVertexCData');
                         vizstruct(cnt).colors=scolor;
                         %vizstruct(cnt).colors=repmat([squeeze(scolor(1,1,:))',0.7],length(vizstruct(cnt).faces),1);
                         vizstruct(cnt).name='';
@@ -236,7 +222,7 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
 
         if strcmp(options.leadprod,'group')
             elstructGroupID = [elstruct.group];
-            sideNum = cellfun(@numel, elSide);
+            sideNum = cellfun(@numel, ptLeads);
             elrenderGroupID = repelem(elstructGroupID, sideNum);
             for g = unique(elstructGroupID)
                 el_renderID = elrenderGroupID == g;
@@ -263,39 +249,40 @@ if ~strcmp(options.patientname,'No Patient Selected') % if not initialize empty 
 
         cnt=1;
         for pt=1:length(elstruct)
-                try
-                    if multiplemode
-                        caption{1}=[elstruct(pt).name,'_Left'];
-                        caption{2}=[elstruct(pt).name,'_Right'];
-                    else
-                        caption{1}='Electrode_Left';
-                        caption{2}='Electrode_Right';
-                    end
-                    %eltog(cnt)=uitoggletool(ht,'CData',ea_get_icn('electrode'),'TooltipString',caption{1},'OnCallback',{@elvisible,el_render,pt,2,'on',options},'OffCallback',{@elvisible,el_render,pt,2,'off',options},'State','on');
-                    %eltog(cnt+1)=uitoggletool(ht,'CData',ea_get_icn('electrode'),'TooltipString',caption{2},'OnCallback',{@elvisible,el_render,pt,1,'on',options},'OffCallback',{@elvisible,el_render,pt,1,'off',options},'State','on');
-                    if isfield(options,'uipatdirs')
-                        if exist([options.uipatdirs{pt} '/cortex/CortElecs.mat'],'file')
-                            vars = whos('-file',[options.uipatdirs{pt} '/cortex/CortElecs.mat']);
-                            CortElecs = load([options.uipatdirs{pt} '/cortex/CortElecs.mat']);
-                            if ismember('Left',{vars.name})
-                                hold on; plot3(CortElecs.Left(:,1),CortElecs.Left(:,2),CortElecs.Left(:,3),'.','color','r','markersize',10)
-                                ctxeltog(cnt)=uitoggletool(ht,'CData',ea_get_icn('cortical_strip'),'TooltipString',['Cortical_' caption{1}],'OnCallback',{@ctxelvisible,el_renderstrip,pt,2,'on',options},'OffCallback',{@elvisible,el_render,pt,2,'off',options},'State','on');
-                            end
-                            if ismember('Right',{vars.name})
-                                ctxeltog(cnt)=uitoggletool(ht,'CData',ea_get_icn('cortical_strip'),'TooltipString',['Cortical_' caption{1}],'OnCallback',{@ctxelvisible,el_renderstrip,pt,2,'on',options},'OffCallback',{@elvisible,el_render,pt,2,'off',options},'State','on');
-                            end
+            try
+                if multiplemode
+                    caption{1}=[elstruct(pt).name,'_Left'];
+                    caption{2}=[elstruct(pt).name,'_Right'];
+                else
+                    caption{1}='Electrode_Left';
+                    caption{2}='Electrode_Right';
+                end
+                %eltog(cnt)=uitoggletool(ht,'CData',ea_get_icn('electrode'),'TooltipString',caption{1},'OnCallback',{@elvisible,el_render,pt,2,'on',options},'OffCallback',{@elvisible,el_render,pt,2,'off',options},'State','on');
+                %eltog(cnt+1)=uitoggletool(ht,'CData',ea_get_icn('electrode'),'TooltipString',caption{2},'OnCallback',{@elvisible,el_render,pt,1,'on',options},'OffCallback',{@elvisible,el_render,pt,1,'off',options},'State','on');
+                if isfield(options,'uipatdirs')
+                    if exist([options.uipatdirs{pt} '/cortex/CortElecs.mat'],'file')
+                        vars = whos('-file',[options.uipatdirs{pt} '/cortex/CortElecs.mat']);
+                        CortElecs = load([options.uipatdirs{pt} '/cortex/CortElecs.mat']);
+                        if ismember('Left',{vars.name})
+                            hold on; plot3(CortElecs.Left(:,1),CortElecs.Left(:,2),CortElecs.Left(:,3),'.','color','r','markersize',10)
+                            ctxeltog(cnt)=uitoggletool(ht,'CData',ea_get_icn('cortical_strip'),'TooltipString',['Cortical_' caption{1}],'OnCallback',{@ctxelvisible,el_renderstrip,pt,2,'on',options},'OffCallback',{@elvisible,el_render,pt,2,'off',options},'State','on');
+                        end
+                        if ismember('Right',{vars.name})
+                            ctxeltog(cnt)=uitoggletool(ht,'CData',ea_get_icn('cortical_strip'),'TooltipString',['Cortical_' caption{1}],'OnCallback',{@ctxelvisible,el_renderstrip,pt,2,'on',options},'OffCallback',{@elvisible,el_render,pt,2,'off',options},'State','on');
                         end
                     end
-                    cnt=cnt+2;
                 end
+                cnt=cnt+2;
+            end
         end
 
         clear cnt
 
-        % Initialize Stimulation-Button
+        % Initialize Single-PT-Only Buttons
         if ~strcmp(options.leadprod, 'group')
-            eladdTraj = uipushtool(ht,'CData',ea_get_icn('addelectrode'),...
-                'TooltipString','Add Trajectory...','ClickedCallback',{@ea_add_trajectory,options});
+            eladdTraj = uipushtool(ht, 'CData', ea_get_icn('addelectrode'),...
+                'TooltipString', 'Trajectory Panel',...
+                'ClickedCallback', {@ea_trajectorymanager, options});
             stimbutton = uipushtool(ht,'CData',ea_get_icn('stimulation'),...
                 'TooltipString','Stimulation Control Figure',...
                 'ClickedCallback',{@openstimviewer,elstruct,resultfig,options});
@@ -315,14 +302,6 @@ end
 slicebutton=uipushtool(ht,'CData',ea_get_icn('slices'),...
     'TooltipString','Slice Control Figure',...
     'ClickedCallback',{@opensliceviewer,resultfig,options});
-
-% Initialize MER-Button
-
-if ~strcmp(options.leadprod, 'group')
-    merbutton=uipushtool(ht,'CData',ea_get_icn('mer'),...
-        'TooltipString','MER Control Figure',...
-        'ClickedCallback',{@ea_openmerviewer,resultfig,options});
-end
 
 % Initialize Convis-Button
 convisbutton=uipushtool(ht,'CData',ea_get_icn('connectome'),...
