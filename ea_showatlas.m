@@ -25,27 +25,30 @@ catch
 end
 nm=nm(logical(nmind)); % select which shall be performed.
 
+colormap(gray);
+
 for nativemni=nm % switch between native and mni space atlases.
 
     switch nativemni
-        case 1
-            adir=[ea_space(options,'atlases'),options.atlasset,filesep];
+        case 1 % mni
+            atlasFolder = ea_space(options,'atlases');
             mifix='';
-        case 2
-            adir=[[options.root,options.patientname,filesep],'atlases',filesep,options.atlasset,filesep];
+        case 2 % native
+            atlasFolder = [options.root,options.patientname,filesep,'atlases',filesep];
             mifix='';
     end
 
     atlascnt=1;
     set(0,'CurrentFigure',resultfig)
+    ht=getappdata(resultfig,'atlht');
 
-    if ~exist([adir,'atlas_index.mat'],'file')
-        atlases=ea_genatlastable([],ea_space(options,'atlases'),options,mifix);
+    if ~exist([atlasFolder,options.atlasset,filesep,'atlas_index.mat'],'file')
+        atlases = ea_genatlastable([],atlasFolder,options,mifix,resultfig);
     else
-        load([adir,'atlas_index.mat']);
-        atlases=ea_genatlastable(atlases,ea_space(options,'atlases'),options,mifix);
+        atlases = ea_loadatlas([atlasFolder,options.atlasset,filesep,'atlas_index.mat'],resultfig,ht);
+        atlases = ea_genatlastable(atlases,atlasFolder,options,mifix);
     end
-
+    
     isdiscfibers = cellfun(@(x) ischar(x) && strcmp(x, 'discfibers'), atlases.pixdim);
     if all(sum(isdiscfibers,2))
         atlases.discfibersonly = 1;
@@ -70,7 +73,6 @@ for nativemni=nm % switch between native and mni space atlases.
         catch
             jetlist=atlases.colormap;
         end
-        %colormap(atlases.colormap);
     else
         try
             jetlist=options.colormap;
@@ -84,20 +86,60 @@ for nativemni=nm % switch between native and mni space atlases.
 
     setinterpol=1;
 
+    if ~isempty(ht) % sweep nonempty atlases toolbar
+        % delete(ht.Children(:));
+    else
+        ht=uitoolbar(resultfig);
+    end
+
     if ~atlases.discfibersonly
-        ht=getappdata(resultfig,'atlht');
-        if ~isempty(ht) % sweep nonempty atlases toolbar
-            delete(ht.Children(:));
-        else
-            ht=uitoolbar(resultfig);
-        end
         atlcntbutton=uipushtool(ht,'CData',ea_get_icn('atlases'),'Tag','Atlas Control','TooltipString','Atlas Control Figure','ClickedCallback',{@ea_openatlascontrol,atlases,resultfig,options});
+    end
+
+    if ~exist('labelbutton','var')
+        labelbutton=uitoggletool(ht,'CData',ea_get_icn('labels'),'Tag','Labels','TooltipString','Labels');
+        labelcolorbutton=uipushtool(ht,'CData',ea_get_icn('colors'),'Tag','Label Color','TooltipString','Label Color');
     end
 
     % prepare stats fields
     if options.writeoutstats
+        %reset previous stats
+        ea_stats.conmat={};
+        ea_stats.conmat_inside_vox={};
+        ea_stats.conmat_inside_hull={};
+        ea_stats.patname={};
+        ea_stats.atlases.names={};
+        ea_stats.atlases.types={};
+        ea_stats.electrodes=[];
+
         for el=1:length(elstruct)
-            for side=1:length(elstruct(el).coords_mm)
+            miss_side=2;%check only if L side is missing.
+            if ea_arenopoints4side(elstruct(el).coords_mm, miss_side)
+                %if the right side is missing, it will be already be "filled" with an empty or NaN array
+                %force to have empty values if side is not present (e.g. in R only case)
+                elstruct(el).coords_mm{miss_side}=[];
+                if isfield(elstruct(el),'coords_acpc') && iscell(elstruct(el).coords_acpc)
+                    if ea_arenopoints4side(elstruct(el).coords_acpc, miss_side)
+                        elstruct(el).coords_acpc{miss_side}=[];
+                    end
+                end
+                elstruct(el).trajectory{miss_side}=[];
+
+                %this will create a second structure
+                elstruct(el).markers(miss_side).head=[];
+                elstruct(el).markers(miss_side).tail=[];
+                elstruct(el).markers(miss_side).x=[];
+                elstruct(el).markers(miss_side).y=[];
+            end
+        end
+
+        %fill with appropriate values or create placeholders (filled with NaNs)
+        for el=1:length(elstruct)
+            for iside=1:length(elstruct(el).coords_mm)
+                % In this case side is iside, as it is not iterating the
+                % options.sides vector
+                side=iside;
+
                 ea_stats.conmat{el,side}=nan(size(elstruct(el).coords_mm{side},1),length(atlases.names));
                 ea_stats.conmat_inside_vox{el,side}=nan(size(elstruct(el).coords_mm{side},1),length(atlases.names));
                 ea_stats.conmat_inside_hull{el,side}=nan(size(elstruct(el).coords_mm{side},1),length(atlases.names));
@@ -113,7 +155,118 @@ for nativemni=nm % switch between native and mni space atlases.
     for atlas=1:length(atlases.names)
         [~,sidestr]=detsides(atlases.types(atlas));
         for side=detsides(atlases.types(atlas))
-            if isnumeric(atlases.pixdim{atlas,side}) || strcmp(atlases.pixdim{atlas,side}, 'fibers')
+            if isnumeric(atlases.pixdim{atlas,side})
+                % Get ROI Tag
+                if ~isempty(atlases.roi{atlas,side}.Tag)
+                    % Check if roi Tag has proper sidestr
+                    if endsWith(atlases.roi{atlas,side}.Tag, ['_',sidestr{side}])
+                        roiTag = atlases.roi{atlas,side}.Tag;
+                    else
+                        roiTag = [atlases.roi{atlas,side}.Tag, '_', sidestr{side}];
+                    end
+                else
+                    roiTag = [atlases.roi{atlas,side}.name,'_',sidestr{side}];
+                end
+
+                % breathe life into stored ea_roi
+                atlases.roi{atlas,side}.plotFigureH=resultfig; % attach to main viewer
+                atlases.roi{atlas,side}.htH=ht; % attach to tooltip menu
+                atlases.roi{atlas,side}.Tag=roiTag;
+                atlases.roi{atlas,side}.breathelife;
+                atlases.roi{atlas,side}.smooth=options.prefs.hullsmooth;
+                atlases.roi{atlas,side}.update_roi;
+
+                atlassurfs{atlascnt,1}=atlases.roi{atlas,side};
+                colorbuttons(atlascnt)=atlases.roi{atlas,side}.toggleH;
+                
+                while 1
+                    try
+                        centroid=mean(atlases.roi{atlas,side}.fv.vertices(:,1:3));
+                        break
+                    catch
+                        atlases.roi{atlas,side}.threshold=atlases.roi{atlas,side}.threshold./2;
+                    end
+                end
+                set(0,'CurrentFigure',resultfig);
+
+                atlases.roi{atlas,side}.Visible='on';
+                if isfield(atlases,'presets')
+                    if ~ismember(atlas,atlases.presets(atlases.defaultset).show)
+                        atlases.roi{atlas,side}.Visible='off';
+                    end
+                end
+
+                % Set atlaslabel
+                atlaslabels(atlascnt)=text(double(centroid(1)),double(centroid(2)),double(centroid(3)),...
+                    ea_underscore2space(roiTag),...
+                    'Tag', roiTag,...
+                    'VerticalAlignment', 'Baseline',...
+                    'HorizontalAlignment', 'Center',...
+                    'FontWeight', 'bold',...
+                    'FontSize', 12,...
+                    'Color', 'w');
+
+                % make fv compatible for stats
+                caxis([1 64]);
+
+                % gather contact statistics
+                if options.writeoutstats
+                    try
+                        if isfield(atlases.XYZ{atlas,side},'val') % volumetric atlas
+                            thresh=ea_detthresh(atlases,atlas,atlases.XYZ{atlas,side}.val);
+                            atsearch=KDTreeSearcher(atlases.XYZ{atlas,side}.mm(atlases.XYZ{atlas,side}.val>thresh,:));
+                        else % fibertract
+                            atsearch=KDTreeSearcher(atlases.XYZ{atlas,side}.mm(:,1:3));
+                        end
+
+                        for el=1:length(elstruct)
+                            if ea_arenopoints4side(ea_stats.electrodes(el).coords_mm,side)
+                                warning_printf=@(str_in) fprintf(['ATTENTION!! : ' str_in '\n']);%this is less obnoxious, as it is not too important
+                                if side==1
+                                    warning_printf(['Statistics for right ' atlases.names{atlas} ' will not be computed as there is no lead in the right side.']);
+                                elseif side==2
+                                    warning_printf(['Statistics for left ' atlases.names{atlas} ' side will not be computed as there is no lead in the left side.']);
+                                else
+                                    warning_printf(['Statistics for this structure(' atlases.names{atlas} ', on side=' num2str(side) ') will not be computed as there is no lead in it.']);
+                                end
+                            else
+                                [~,D]=knnsearch(atsearch,ea_stats.electrodes(el).coords_mm{side});
+
+                                ea_stats.conmat{el,side}(:,atlas)=D;
+                                Dh=D;
+
+                                try
+                                    in=inhull(ea_stats.electrodes(el).coords_mm{side},atlases.roi{atlas,side}.fv.vertices,atlases.roi{atlas,side}.fv.faces,1.e-13*mean(abs(atlases.roi{atlas,side}.fv.vertices(:))));
+                                    Dh(in)=0;
+                                end
+                                ea_stats.conmat_inside_hull{el,side}(:,atlas)=Dh;
+
+                                D(D<mean(atlases.pixdim{atlas,side}))=0; % using mean here but assuming isotropic atlases in general..
+                                ea_stats.conmat_inside_vox{el,side}(:,atlas)=D;
+                            end
+                        end
+                    catch
+                        warning('Statistics for tract atlas parts are not implemented yet.');
+                    end
+                end
+
+                % set Tags
+                try
+                    set(colorbuttons(atlascnt),'Tag', roiTag)
+                    atlassurfs{atlascnt,1}.Tag = roiTag;
+                catch
+                    keyboard
+                end
+                atlascnt=atlascnt+1;
+
+                set(gcf,'Renderer','OpenGL')
+                axis off
+                axis equal
+
+                if rand(1)>0.8 % we don't want to show every buildup step due to speed but want to show some buildup.
+                    drawnow
+                end
+            elseif strcmp(atlases.pixdim{atlas,side}, 'fibers')
                 fv=atlases.fv{atlas,side};
 
                 if ischar(options.prefs.hullsimplify)   % for 'auto' hullsimplify
@@ -131,15 +284,7 @@ for nativemni=nm % switch between native and mni space atlases.
                     end
                 end
 
-                rndfactor=1;
-                try
-                    switch atlases.names{atlas,side}(end-2:end)
-                        case 'nii'
-                            rndfactor=2;
-                        case {'trk','mat'}
-                            rndfactor=0.2;
-                    end
-                end
+                rndfactor=0.2;
 
                 try
                     if ~options.prefs.d3.colorjitter
@@ -162,8 +307,6 @@ for nativemni=nm % switch between native and mni space atlases.
                 XYZ=atlases.XYZ{atlas,side};
                 pixdim=atlases.pixdim{atlas,side};
                 colorc=nan;
-
-                % show atlas label
 
                 if size(XYZ.mm,1)>1 % exception for single-coordinate atlases...
                     try
@@ -194,23 +337,18 @@ for nativemni=nm % switch between native and mni space atlases.
                     end
                 end
                 if ~(atlases.types(atlas)>5)
-                    atlassurfs(atlascnt,1)=patch(fv,'FaceVertexCData',cdat,'FaceColor','interp','facealpha',0.7,'EdgeColor','none','facelighting','phong','visible',visible);
+                    atlassurfs{atlascnt,1}=patch(fv,'FaceVertexCData',cdat,'FaceColor','interp','facealpha',0.7,'EdgeColor','none','facelighting','phong','visible',visible);
                 end
-                % export label and labelbutton
 
-                [~,thislabel]=fileparts(atlases.names{atlas});
-                % try % use try here because filename might be shorter than .nii
-                %     if strcmp(thislabel(end-3:end),'.nii') % if it was .nii.gz, fileparts will only remove .gz
-                        [~,thislabel]=fileparts(thislabel);
-                %     end
-                % end
-                atlaslabels(atlas,side)=text(double(centroid(1)),double(centroid(2)),double(centroid(3)),ea_sub2space(thislabel),'Tag',[thislabel,'_',sidestr{side}],'VerticalAlignment','Baseline','HorizontalAlignment','Center','Color','w');
-
-                if ~exist('labelbutton','var')
-                    labelbutton=uitoggletool(ht,'CData',ea_get_icn('labels'),'Tag','Labels','TooltipString','Labels');
-                    labelcolorbutton=uipushtool(ht,'CData',ea_get_icn('colors'),'Tag','Label Color','TooltipString','Label Color');
-                end
-                % make fv compatible for stats
+                fibTag = regexp(atlases.names{atlas},['[^',filesep,']+?(?=\.[^.]*$|$)'],'match','once');
+                atlaslabels(atlascnt)=text(double(centroid(1)),double(centroid(2)),double(centroid(3)),...
+                    ea_underscore2space(fibTag),...
+                    'Tag', [fibTag,'_',sidestr{side}],...
+                    'VerticalAlignment', 'Baseline',...
+                    'HorizontalAlignment', 'Center',...
+                    'FontWeight', 'bold',...
+                    'FontSize', 12,...
+                    'Color','w');
 
                 caxis([1 64]);
 
@@ -236,20 +374,30 @@ for nativemni=nm % switch between native and mni space atlases.
                         end
 
                         for el=1:length(elstruct)
-                            [~,D]=knnsearch(atsearch,ea_stats.electrodes(el).coords_mm{side});
-                            %s_ix=sideix(side,size(elstruct(el).coords_mm{side},1));
+                            if ea_arenopoints4side(ea_stats.electrodes(el).coords_mm,side)
+                                warning_printf=@(str_in) fprintf(['ATTENTION!! : ' str_in '\n']);%this is less obnoxious, as it is not too important
+                                if side==1
+                                    warning_printf(['Statistics for right ' atlases.names{atlas} ' will not be computed as there is no lead in the right side.']);
+                                elseif side==2
+                                    warning_printf(['Statistics for left ' atlases.names{atlas} ' side will not be computed as there is no lead in the left side.']);
+                                else
+                                    warning_printf(['Statistics for this structure(' atlases.names{atlas} ', on side=' num2str(side) ') will not be computed as there is no lead in it.']);
+                                end
+                            else
+                                [~,D]=knnsearch(atsearch,ea_stats.electrodes(el).coords_mm{side});
 
-                            ea_stats.conmat{el,side}(:,atlas)=D;
-                            Dh=D;
+                                ea_stats.conmat{el,side}(:,atlas)=D;
+                                Dh=D;
 
-                            try
-                                in=inhull(ea_stats.electrodes(el).coords_mm{side},fv.vertices,fv.faces,1.e-13*mean(abs(fv.vertices(:))));
-                                Dh(in)=0;
+                                try
+                                    in=inhull(ea_stats.electrodes(el).coords_mm{side},fv.vertices,fv.faces,1.e-13*mean(abs(fv.vertices(:))));
+                                    Dh(in)=0;
+                                end
+                                ea_stats.conmat_inside_hull{el,side}(:,atlas)=Dh;
+
+                                D(D<mean(pixdim))=0; % using mean here but assuming isotropic atlases in general..
+                                ea_stats.conmat_inside_vox{el,side}(:,atlas)=D;
                             end
-                            ea_stats.conmat_inside_hull{el,side}(:,atlas)=Dh;
-
-                            D(D<mean(pixdim))=0; % using mean here but assuming isotropic atlases in general..
-                            ea_stats.conmat_inside_vox{el,side}(:,atlas)=D;
                         end
                     catch
                         % Warn once
@@ -259,9 +407,8 @@ for nativemni=nm % switch between native and mni space atlases.
                     end
                 end
 
-                %normals{atlas,side}=get(atlassurfs(atlascnt),'VertexNormals');
                 if ~(atlases.types(atlas)>5)
-                    ea_spec_atlas(atlassurfs(atlascnt,1),atlases.names{atlas},atlases.colormap,setinterpol);
+                    ea_spec_atlas(atlassurfs{atlascnt,1},atlases.names{atlas},atlases.colormap,setinterpol);
                 else
                     pobj.plotFigureH=resultfig;
                     pobj.color=atlasc;
@@ -269,15 +416,15 @@ for nativemni=nm % switch between native and mni space atlases.
                     pobj.openedit=1;
                     pobj.htH=ht;
                     obj=ea_roi([ea_space([],'atlases'),options.atlasset,filesep,getsidec(side),filesep,atlases.names{atlas}],pobj);
-                    atlassurfs(atlascnt,1)=obj.patchH;
+                    atlassurfs{atlascnt,1}=obj.patchH;
                     colorbuttons(atlascnt)=obj.toggleH;
                 end
 
                 % set Tags
                 try
-                    set(colorbuttons(atlascnt),'tag',[thislabel,'_',sidestr{side}])
-                    set(atlassurfs(atlascnt,1),'tag',[thislabel,'_',sidestr{side}])
-                    set(atlassurfs(atlascnt,1),'UserData',atlaslabels(atlas,side))
+                    set(colorbuttons(atlascnt),'tag',[fibTag,'_',sidestr{side}])
+                    set(atlassurfs{atlascnt,1},'tag',[fibTag,'_',sidestr{side}])
+                    set(atlassurfs{atlascnt,1},'UserData',atlaslabels(atlascnt))
                 catch
                     keyboard
                 end
@@ -285,162 +432,163 @@ for nativemni=nm % switch between native and mni space atlases.
 
                 set(gcf,'Renderer','OpenGL')
                 axis off
-                % set(gcf,'color','w');
                 axis equal
 
                 if rand(1)>0.8 % we don't want to show every buildup step due to speed but want to show some buildup.
                     drawnow
                 end
             elseif strcmp(atlases.pixdim{atlas,side}, 'discfibers')
-                load([ea_space([],'atlases'),options.atlasset,filesep,getsidec(side,sidestr),filesep,atlases.names{atlas}]);
+                tractPath = [ea_space([],'atlases'),options.atlasset,filesep,getsidec(side,sidestr)];
+                tractName = ea_stripext(atlases.names{atlas});
 
-                showfibersset = discfiberssetting.showfibersset;
-                pospredthreshold = discfiberssetting.pospredthreshold/100;
-                negpredthreshold = discfiberssetting.negpredthreshold/100;
+                disctract = load([tractPath, filesep, atlases.names{atlas}]);
+                fibcell = disctract.fibcell;
+                vals = disctract.vals;
+                fibcolor = disctract.fibcolor;
 
-                % Normalize vals
-                vals(isnan(vals))=0;
-                % vals=vals./max(abs(vals));
-
-                % vals and fibcell to be trimmed for visualization
-                tvals=vals;
-                tfibcell=fibcell;
-
-                % Calculate positive/negative threshold for positive/negative predictive
-                % fibers according to 'predthreshold'
-                posits=tvals(tvals>0);
-                negits=tvals(tvals<0);
-                posits=sort(posits,'descend');
-                negits=sort(negits,'ascend');
-                posthresh=posits(round(length(posits)*pospredthreshold));
-                negthresh=negits(round(length(negits)*negpredthreshold));
-
-                discfiberID = strrep(atlases.names{atlas}, '.mat', '');
-
-                % Save the original values for reusing in slider
-                setappdata(resultfig, ['vals',discfiberID], vals);
-                setappdata(resultfig, ['fibcell',discfiberID], fibcell);
-                setappdata(resultfig, ['showfibersset',discfiberID], showfibersset);
-                setappdata(resultfig, ['pospredthreshold',discfiberID], pospredthreshold);
-                setappdata(resultfig, ['negpredthreshold',discfiberID], negpredthreshold);
-                setappdata(resultfig, ['posits',discfiberID], posits);
-                setappdata(resultfig, ['negits',discfiberID], negits);
-
-                switch showfibersset
-                    case 'positive'
-                        negthresh = negits(1)-eps;
-                        disp(['Fiber colors: Positive (T = ',num2str(posthresh),' ~ ',num2str(posits(1)), ')']);
-                    case 'negative'
-                        posthresh = posits(1)+eps;
-                        disp(['Fiber colors: Negative (T = ',num2str(negits(1)),' ~ ',num2str(negthresh), ')']);
-                    case 'both'
-                        disp(['Fiber colors: Positive (T = ',num2str(posthresh),' ~ ',num2str(posits(1)), ...
-                          '); Negative (T = ',num2str(negits(1)),' ~ ',num2str(negthresh),').']);
+                % Compatibility for fibers combining both sides
+                if size(fibcell,2) == 1
+                    fibcell = {fibcell};
                 end
 
-                % Remove tvals and fibers outside the thresholding range
-                remove=logical(logical(tvals<posthresh) .* logical(tvals>negthresh));
-                tvals(remove)=[];
-                tfibcell(remove)=[];
+                for s=1:length(fibcell)
+                    fibcell{s} = ea_discfibers_addjitter(fibcell{s}, 0.01);
+                end
 
-                % Rescale positive/negative tvals to [0 1]/[-1 0]
-                tvalsRescale = tvals;
-                tvalsRescale(tvals>0)=ea_rescale(tvals(tvals>0), [0 1]);
-                tvalsRescale(tvals<0)=ea_rescale(tvals(tvals<0), [-1 0]);
+                if ~iscell(vals)
+                    vals = {vals};
+                end
+
+                allvals = vertcat(vals{:});
 
                 % Contruct colormap
-                colormap(gray);
-                fibcmap = ea_colorgradient(1024, [0,0,1], [1,1,1], [1,0,0]);
-                setappdata(resultfig, ['fibcmap',discfiberID], fibcmap);
+                gradientLevel = 1024;
+                cmapShiftRatio = 0.4;
+                shiftedCmapStart = round(gradientLevel*cmapShiftRatio)+1;
+                shiftedCmapEnd = gradientLevel-round(gradientLevel*cmapShiftRatio);
+                shiftedCmapLeftEnd = gradientLevel/2-round(gradientLevel/2*cmapShiftRatio);
+                shiftedCmapRightStart = round(gradientLevel/2*cmapShiftRatio)+1;
 
-                fibcolorInd=tvalsRescale*(size(fibcmap,1)/2-0.5);
-                fibcolorInd=fibcolorInd+(size(fibcmap,1)/2+0.5);
-
-                % Set alphas of fibers with light color to 0
-                colorbarThreshold = 0.60; % Percentage of the pos/neg color to be kept
-                negUpperBound=ceil(size(fibcmap,1)/2*colorbarThreshold);
-                poslowerBound=floor((size(fibcmap,1)-size(fibcmap,1)/2*colorbarThreshold));
-                alphas=zeros(size(fibcolorInd,1),1);
-
-                switch showfibersset
-                    case 'positive'
-                        alphas(round(fibcolorInd)>=poslowerBound) = 1;
-                    case 'negative'
-                        alphas(round(fibcolorInd)<=negUpperBound) = 1;
-                    case 'both'
-                        alphas(round(fibcolorInd)>=poslowerBound) = 1;
-                        alphas(round(fibcolorInd)<=negUpperBound) = 1;
+                if isfield(disctract.info, 'PosAmount') && isfield(disctract.info, 'NegAmount')
+                    disp(['Fiber colors: Positive (T = ',num2str(min(allvals(allvals>0))),' ~ ',num2str(max(allvals(allvals>0))), ...
+                      '); Negative (T = ',num2str(max(allvals(allvals<0))),' ~ ',num2str(min(allvals(allvals<0))),').']);
+                    cmap = ea_colorgradient(gradientLevel/2, fibcolor(1,:), [1,1,1]);
+                    cmapLeft = ea_colorgradient(gradientLevel/2, fibcolor(1,:), cmap(shiftedCmapLeftEnd,:));
+                    cmap = ea_colorgradient(gradientLevel/2, [1,1,1], fibcolor(2,:));
+                    cmapRight = ea_colorgradient(gradientLevel/2, cmap(shiftedCmapRightStart,:), fibcolor(2,:));
+                    fibcmap = [cmapLeft;cmapRight];
+                    cmapind = ones(size(allvals))*gradientLevel/2;
+                    cmapind(allvals<0) = round(normalize(allvals(allvals<0),'range',[1,gradientLevel/2]));
+                    cmapind(allvals>0) = round(normalize(allvals(allvals>0),'range',[gradientLevel/2+1,gradientLevel]));
+                    alphaind = ones(size(allvals));
+                    % alphaind(allvals<0) = normalize(-allvals(allvals<0), 'range');
+                    % alphaind(allvals>0) = normalize(allvals(allvals>0), 'range');
+                elseif isfield(disctract.info, 'PosAmount')
+                    disp(['Fiber colors: Positive (T = ',num2str(min(allvals)),' ~ ',num2str(max(allvals)), ')']);
+                    cmap = ea_colorgradient(gradientLevel, [1,1,1], fibcolor(2,:));
+                    fibcmap = ea_colorgradient(gradientLevel, cmap(shiftedCmapStart,:), fibcolor(2,:));
+                    cmapind = round(normalize(allvals,'range',[1,gradientLevel]));
+                    alphaind = ones(size(allvals));
+                    % alphaind = normalize(allvals, 'range');
+                elseif isfield(disctract.info, 'NegAmount')
+                    disp(['Fiber colors: Negative (T = ',num2str(max(allvals)),' ~ ',num2str(min(allvals)), ')']);
+                    cmap = ea_colorgradient(gradientLevel, fibcolor(1,:), [1,1,1]);
+                    fibcmap = ea_colorgradient(gradientLevel, fibcolor(1,:), cmap(shiftedCmapEnd,:));
+                    cmapind = round(normalize(allvals,'range',[1,gradientLevel]));
+                    alphaind = ones(size(allvals));
+                    % alphaind = normalize(-allvals, 'range');
                 end
 
-                alphas(round(fibcolorInd)>=poslowerBound) = 1;
+                cmapind = mat2cell(cmapind, [numel(vals{1}), numel(vals{2})])';
+                alphaind = mat2cell(alphaind, [numel(vals{1}), numel(vals{2})])';
 
-                % only show right side
-                % for i=1:length(tfibcell)
-                %     if any(tfibcell{i}(:,1)<0)
-                %         alphas(i) = 0;
-                %     end
-                % end
+                for fibside=1:2
+                    if isempty(fibcell{fibside}) || isempty(vals{fibside})
+                        continue;
+                    end
 
-                fibalpha=mat2cell(alphas,ones(size(fibcolorInd,1),1));
+                    % Plot fibers
+                    h = streamtube(fibcell{fibside},0.2);
 
-                % Plot fibers
-                h=streamtube(tfibcell,0.2);
-                nones=repmat({'none'},size(fibcolorInd));
-                [h.EdgeColor]=nones{:};
+                    for fib=1:length(h)
+                        if vals{fibside}(fib)>0
+                            h(fib).Tag = 'PositiveFiber';
+                        elseif vals{fibside}(fib)<0
+                            h(fib).Tag = 'NegativeFiber';
+                        end
+                    end
 
-                % Calulate fiber colors
-                colors=fibcmap(round(fibcolorInd),:);
-                fibcolor=mat2cell(colors,ones(size(fibcolorInd)));
+                    nones = repmat({'none'},size(fibcell{fibside}));
+                    [h.EdgeColor] = nones{:};
 
-                % Set fiber colors and alphas
-                [h.FaceColor]=fibcolor{:};
-                [h.FaceAlpha]=fibalpha{:};
+                    % Calulate fiber colors alpha values
+                    fibcolor = mat2cell(fibcmap(cmapind{fibside},:), ones(size(fibcell{fibside})));
+                    fibalpha = mat2cell(alphaind{fibside},ones(size(fibcell{fibside})));
+
+                    % Set fiber colors and alphas
+                    [h.FaceColor] = fibcolor{:};
+                    [h.FaceAlpha] = fibalpha{:};
+
+                    if size(vals,2)==2 && fibside == 1
+                        sideStr = ', Right side';
+                    elseif size(vals,2)==2 && fibside == 2
+                        sideStr = ', Left side';
+                    else
+                        sideStr = '';
+                    end
+
+                    uitoggletool(ht, 'CData', ea_get_icn('discfiber'),...
+                        'TooltipString', ['Discriminative fibertract: ', tractName, sideStr],...
+                        'Tag', ['Discriminative fibertract: ', tractName, sideStr],...
+                        'OnCallback', {@showfiber, h},'OffCallback', {@hidefiber, h}, 'State', 'on');
+
+                    set(0,'CurrentFigure',resultfig)
+                end
 
                 % Set colorbar tick positions and labels
-                cbvals = tvals(logical(alphas));
-                % cbvals=tvalsRescale(logical(alphas));
-                switch showfibersset
-                    case 'positive'
-                        cbmap = fibcmap(ceil(length(fibcmap)/2+0.5):end,:);
-                        tick = [poslowerBound, length(fibcmap)] - floor(length(fibcmap)/2) ;
-                        poscbvals = sort(cbvals(cbvals>0));
-                        ticklabel = [poscbvals(1), poscbvals(end)];
-                        ticklabel = arrayfun(@(x) num2str(x,'%.2f'), ticklabel, 'Uni', 0);
-                    case 'negative'
-                        cbmap = fibcmap(1:floor(length(fibcmap)/2-0.5),:);
-                        tick = [1, negUpperBound];
-                        negcbvals = sort(cbvals(cbvals<0));
-                        ticklabel = [negcbvals(1), negcbvals(end)];
-                        ticklabel = arrayfun(@(x) num2str(x,'%.2f'), ticklabel, 'Uni', 0);
-                    case 'both'
-                        cbmap = fibcmap;
-                        tick = [1, negUpperBound, poslowerBound, length(fibcmap)];
-                        poscbvals = sort(cbvals(cbvals>0));
-                        negcbvals = sort(cbvals(cbvals<0));
-                        ticklabel = [min(cbvals), negcbvals(end), poscbvals(1), max(cbvals)];
-                        ticklabel = arrayfun(@(x) num2str(x,'%.2f'), ticklabel, 'Uni', 0);
+                if isfield(disctract.info, 'PosAmount') && isfield(disctract.info, 'NegAmount')
+                    tick = [1, length(fibcmap)];
+                    poscbvals = sort(allvals(allvals>0));
+                    negcbvals = sort(allvals(allvals<0));
+                    ticklabel = [negcbvals(1), poscbvals(end)];
+                    ticklabel = arrayfun(@(x) num2str(x,'%.2f'), ticklabel, 'Uni', 0);
+                elseif isfield(disctract.info, 'PosAmount')
+                    tick = [1, length(fibcmap)];
+                    poscbvals = sort(allvals(allvals>0));
+                    ticklabel = [poscbvals(1), poscbvals(end)];
+                    ticklabel = arrayfun(@(x) num2str(x,'%.2f'), ticklabel, 'Uni', 0);
+                elseif isfield(disctract.info, 'NegAmount')
+                    tick = [1, length(fibcmap)];
+                    negcbvals = sort(allvals(allvals<0));
+                    ticklabel = [negcbvals(1), negcbvals(end)];
+                    ticklabel = arrayfun(@(x) num2str(x,'%.2f'), ticklabel, 'Uni', 0);
                 end
 
-                figTitle = [discfiberID, ' discfibers'];
-                discfibersname = ['discfibers', discfiberID];
-                cbfigname = ['cbfig', discfiberID];
-                discfiberscontrolname = ['discfiberscontrol', discfiberID];
-
                 % Plot colorbar
-                cbfig = ea_plot_colorbar(cbmap, [], 'h', '', tick, ticklabel);
-                set(cbfig, 'NumberTitle', 'off', 'Name', ['Colorbar: ', figTitle]);
-
-                % Discriminative fiber control
-                discfiberscontrol = ea_discfibers_control(resultfig, discfiberID);
-                set(discfiberscontrol, 'NumberTitle', 'off', 'Name', ['Control: ', figTitle]);
-                setappdata(discfiberscontrol, 'discfiberID', discfiberID);
-
-                setappdata(resultfig, discfibersname, h);
-                setappdata(resultfig, cbfigname, cbfig);
-                setappdata(resultfig, discfiberscontrolname, discfiberscontrol);
-                set(0,'CurrentFigure',resultfig)
+                cbfig = figure('Visible', 'off');
+                ea_plot_colorbar(fibcmap, [], 'h', '', tick, ticklabel, axes(cbfig));
+                saveas(cbfig, [tractPath, filesep, tractName, '_colorbar.svg']);
+                close(cbfig);
+                % export_fig(cbfig, [tractPath, filesep, tractName, '_colorbar.png']);
+                fprintf('Colorbar exported as:\n%s\n\n', [tractPath, filesep, tractName, '_colorbar.svg']);
             end
         end
+    end
+
+    % Add toggles for positive and negative fibers when existing
+    posdiscfiberset = findobj(resultfig, 'Type', 'Surface', 'Tag', 'PositiveFiber');
+    if ~isempty(posdiscfiberset)
+        uitoggletool(ht, 'CData', ea_get_icn('discfiber'),...
+                'TooltipString', 'Positive fibers',...
+                'Tag', 'ShowPositiveToggle',...
+                'OnCallback', {@showfiber, posdiscfiberset},'OffCallback', {@hidefiber, posdiscfiberset}, 'State', 'on');
+    end
+    negdiscfiberset = findobj(resultfig, 'Type', 'Surface', 'Tag', 'NegativeFiber');
+    if ~isempty(negdiscfiberset)
+        uitoggletool(ht, 'CData', ea_get_icn('discfiber'),...
+                'TooltipString', 'Positive fibers',...
+                'Tag', 'ShowPositiveToggle',...
+                'OnCallback', {@showfiber, negdiscfiberset},'OffCallback', {@hidefiber, negdiscfiberset}, 'State', 'on');
     end
 
     % configure label button to work properly and hide labels as default.
@@ -461,31 +609,30 @@ for nativemni=nm % switch between native and mni space atlases.
         setappdata(resultfig,'atlaslabels',atlaslabels);
     end
 
-    % save table information that has been generated from nii files (on first run with this atlas set).
-    % try
-    %     atlases.fv=ifv;
-    %     atlases.cdat=icdat;
-    %     atlases.XYZ=iXYZ;
-    %     atlases.pixdim=ipixdim;
-    %     atlases.colorc=icolorc;
-    %     atlases.normals=normals;
-    % end
+    % Remove empty toolbar
+    toolbars = findobj(resultfig.Children,'Type', 'uitoolbar');
+    emptyToolbar = arrayfun(@(tb) isempty(tb.Children), toolbars);
+    delete(toolbars(emptyToolbar));
 
     try
         setappdata(resultfig,'atlases',atlases);
-        % setappdata(resultfig,'iXYZ',atlases.XYZ);
-        % setappdata(resultfig,'ipixdim',atlases.pixdim);
     end
 
     try
         atlases.rebuild=0; % always reset rebuild flag.
-        save([adir,options.atlasset,filesep,'atlas_index.mat'],'atlases','-v7.3');
+        ea_saveatlas(atlasFolder,options.atlasset,atlases);
+    end
+
+    if isfield(atlases, 'citation')
+        ea_methods(options, ['Atlas used for 3D visualization: ', atlases.citation.name], atlases.citation.long);
     end
 
     if options.writeoutstats
         if exist('prioratlasnames','var')
             if ~isequal(ea_stats.atlases.names,prioratlasnames)
-                warning('Other atlasset used as before. Deleting VAT and Fiberinfo. Saving backup copy.');
+                warning('off', 'backtrace');
+                warning('%s: other atlasset used as before. Deleting VAT and Fiberinfo. Saving backup copy.', options.patientname);
+                warning('on', 'backtrace');
                 ds=load([options.root,options.patientname,filesep,'ea_stats']);
                 save(fullfile([options.root,options.patientname],'ea_stats'),'ea_stats','-v7.3');
                 save(fullfile([options.root,options.patientname],'ea_stats_backup'),'-struct','ds','-v7.3');
@@ -501,9 +648,10 @@ end
 
 % open up atlas control viewer
 function setlabelcolor(hobj,ev,robject)
-
 co = ea_uisetcolor;
-set(robject,'Color',co);
+if ~numel(co)==1
+    set(robject,'Color',co);
+end
 
 
 function atlasvisible(hobj,ev,resultfig,atlscnt,onoff)
@@ -588,6 +736,14 @@ switch type
         sides=1:2;
         sidestr={'right','left'};
 end
+
+
+function showfiber(~ ,~, discfibers)
+arrayfun(@(f) set(f, 'Visible', 'on'), discfibers);
+
+
+function hidefiber(~ ,~, discfibers)
+arrayfun(@(f) set(f, 'Visible', 'off'), discfibers)
 
 
 function sidec=getsidec(side, sidestr)

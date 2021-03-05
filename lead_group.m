@@ -22,7 +22,7 @@ function varargout = lead_group(varargin)
 
 % Edit the above text to modify the response to help lead_group
 
-% Last Modified by GUIDE v2.5 23-Mar-2020 14:04:53
+% Last Modified by GUIDE v2.5 13-Nov-2020 13:22:10
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -65,7 +65,7 @@ guidata(hObject, handles);
 % uiwait(handles.leadfigure);
 
 options.earoot = ea_getearoot;
-options.prefs = ea_prefs('');
+options.prefs = ea_prefs;
 setappdata(handles.leadfigure,'earoot',options.earoot);
 
 % Build popup tables:
@@ -77,7 +77,7 @@ atlases = atlases(cellfun(@(x) ~strcmp(x(1),'.'), atlases));
 atlases{end+1} = 'Use none';
 
 set(handles.atlassetpopup,'String', atlases);
-[~, defix]=ismember(options.prefs.atlases.default, atlases);
+[~, defix]=ismember(options.prefs.machine.defaultatlas, atlases);
 if defix
     set(handles.atlassetpopup,'Value',defix);
 end
@@ -93,6 +93,12 @@ for nd=length(ndir):-1:1
         genvatfunctions{cnt}=methodf;
         cnt=cnt+1;
     end
+end
+
+if ~options.prefs.env.dev
+    ossdbsInd = find(contains(ndc,'OSS-DBS'));
+    genvatfunctions(ossdbsInd) = [];
+    ndc(ossdbsInd) = [];
 end
 
 setappdata(handles.leadfigure,'genvatfunctions',genvatfunctions);
@@ -122,16 +128,15 @@ labeling = cellfun(@(x) {strrep(x, '.nii', '')}, {labeling.name});
 
 set(handles.labelpopup,'String', labeling);
 
-try
-    priorselection = find(ismember(labeling, stimparams.labelatlas)); % retrieve prior selection of fiberset.
-    if length(priorselection) == 1
-        set(handles.labelpopup,'Value',priorselection); % set to prior selection
-    else % if priorselection was a cell array with more than one entry, set to use all
-        set(handles.labelpopup,'Value',lab+1); % set to use all
-    end
-catch    % reinitialize using third entry.
-    set(handles.labelpopup,'Value',1);
-end
+% Initialize parcellation popupmenu
+defaultParc = options.prefs.lg.defaultParcellation;
+set(handles.labelpopup,'Value',find(ismember(labeling, defaultParc)));
+
+% Set connectome popup
+modlist = ea_genmodlist([],[],options,'dmri');
+modlist{end+1}='Do not calculate connectivity stats';
+set(handles.fiberspopup,'String',modlist);
+set(handles.fiberspopup,'Value',length(modlist));
 
 % set version text:
 set(handles.versiontxt,'String',['v',ea_getvsn('local')]);
@@ -341,11 +346,11 @@ if isempty(M.S)
     M.S(1:length(folders))=tS;
 else
     try
-    M.S(end+1:end+length(folders))=tS;
+        M.S(end+1:end+length(folders))=tS;
     catch
         tS.volume=[0,0];
         tS.sources=[1:4];
-            M.S(end+1:end+length(folders))=tS;
+        M.S(end+1:end+length(folders))=tS;
     end
 end
 
@@ -446,8 +451,11 @@ options.normregressor=M.ui.normregpopup;
 % says so:
 
 for reg=1:length(options.d3.isomatrix)
-    try options.d3.isomatrix{reg}=ea_reformat_isomatrix(options.d3.isomatrix{reg},M,options); end
+    try
+        options.d3.isomatrix{reg}=ea_reformat_isomatrix(options.d3.isomatrix{reg},M,options);
+    end
 end
+
 if ~strcmp(get(handles.groupdir_choosebox,'String'),'Choose Group Directory') % group dir still not chosen
     disp('Saving data...');
     % save M
@@ -540,7 +548,7 @@ whichelmodel = elmodels{M.ui.elmodelselect};
 % account for electrode model specified in lead group
 if ~strcmp(whichelmodel,'Patient specified')
     arcell=repmat({whichelmodel},length(ptidx),1);
-   [M.elstruct(ptidx).elmodel]=arcell{:};
+    [M.elstruct(ptidx).elmodel]=arcell{:};
 end
 
 resultfig=ea_elvis(options,M.elstruct(ptidx));
@@ -548,7 +556,7 @@ resultfig=ea_elvis(options,M.elstruct(ptidx));
 try % zoom on coordinates.
     coords={M.elstruct(:).coords_mm};
     for c=1:length(coords)
-        call(c,:)=mean([coords{c}{1};coords{c}{2}]);
+        call(c,:)=nanmean([coords{c}{1};coords{c}{2}]);
     end
     ea_zoomcenter(resultfig.CurrentAxes, mean(call), 5);
 catch
@@ -563,15 +571,6 @@ if options.expstatvat.do % export to nifti volume
     pobj.openedit=1;
     hshid=ea_datahash(M.ui.listselect);
     ea_roi([options.root,options.patientname,filesep,'statvat_results',filesep,'models',filesep,'statvat_',M.clinical.labels{M.ui.clinicallist},'_T_nthresh_',hshid,'.nii'],pobj);
-end
-
-if M.ui.showdiscfibers % show discriminative fibers
-    M.ui.connectomename=get(handles.fiberspopup,'String');
-    M.ui.connectomename=M.ui.connectomename{get(handles.fiberspopup,'Value')};
-    discfiberssetting = options.prefs.machine.lg.discfibers;
-    fibsweighted=ea_discfibers_calcdiscfibers(M,discfiberssetting);
-    ea_discfibers_showdiscfibers(M,discfiberssetting,resultfig,fibsweighted);
-    set(0, 'CurrentFigure', resultfig);
 end
 
 ea_busyaction('off',handles.leadfigure,'group');
@@ -874,22 +873,12 @@ end
 
 for pt=selection
     % set pt specific options
-
-    % own fileparts to support windows/mac/linux slashes even if they come
-    % from a different OS.
-    if ~contains(M.patient.list{pt},'/')
-        lookfor='\';
+    if M.ui.detached
+        options.patientname = M.patient.list{pt};
+        options.root = M.ui.groupdir;
     else
-        lookfor='/';
-    end
-
-    slashes=strfind(M.patient.list{pt},lookfor);
-    if ~isempty(slashes)
-        options.patientname=M.patient.list{pt}(slashes(end)+1:end);
-        options.root=M.patient.list{pt}(1:slashes(end));
-    else
-        options.patientname=M.patient.list{pt};
-        options.root='';
+        [options.root, options.patientname] = fileparts(M.patient.list{pt});
+        options.root = [options.root, filesep];
     end
 
     fprintf('\nProcessing %s...\n\n', options.patientname);
@@ -915,6 +904,17 @@ for pt=selection
     catch
         options.d3.isomatrix={};
     end
+    try
+        options.d3.isomatrix_name=M.isomatrix_name;
+    catch
+        options.d3.isomatrix_name={};
+    end
+    options.normregressor=M.ui.normregpopup;
+    for reg=1:length(options.d3.isomatrix)
+        try
+            options.d3.isomatrix{reg}=ea_reformat_isomatrix(options.d3.isomatrix{reg},M,options);
+        end
+    end
 
     options.d3.isovscloud=M.ui.isovscloudpopup;
     options.d3.showisovolume=M.ui.showisovolumecheck;
@@ -930,7 +930,7 @@ for pt=selection
 
     if M.ui.detached
         processlocal=1;
-        mkdir([M.ui.groupdir,options.patientname]);
+        ea_mkdir([M.ui.groupdir,options.patientname]);
         options.root=M.ui.groupdir;
         %    options.patientname='tmp';
         try
@@ -978,8 +978,6 @@ for pt=selection
     resultfig=ea_elvis(options,M.elstruct(pt));
 
     % save scene as matlab figure
-
-
     options.modality=ea_checkctmrpresent(M.patient.list{pt});
     volumespresent=1;
     if options.modality(1) % prefer MR
@@ -1011,7 +1009,6 @@ for pt=selection
             keyboard
         end
 
-
         options=getappdata(resultfig,'options'); % selected atlas could have refreshed.
 
         options.orignative=options.native; % backup
@@ -1020,29 +1017,63 @@ for pt=selection
             warning(['You chose to process VTAs in native space but patient-data cannot be found for ',M.patient.list{pt},'. Proceeding with VTA calculation directly in template space.']);
             options.native=0;
         end
-        setappdata(handles.leadfigure,'resultfig',resultfig);
-        for side=1:2
-            setappdata(resultfig,'elstruct',M.elstruct(pt));
-            setappdata(resultfig,'elspec',options.elspec);
-            try
-                [stimparams(1,side).VAT(1).VAT,volume]=feval(ea_genvat,M.elstruct(pt).coords_mm,M.S(pt),side,options,['gs_',M.guid],options.prefs.machine.vatsettings.horn_ethresh,handles.leadfigure);
-            catch
-                msgbox(['Error while creating VTA of ',M.patient.list{pt},'.']);
-                volume=0;
-            end
-            stimparams(1,side).volume=volume;
-        end
-        options.native=options.orignative; % restore
 
+        setappdata(handles.leadfigure,'resultfig',resultfig);
+        setappdata(resultfig,'elstruct',M.elstruct(pt));
+        setappdata(resultfig,'elspec',options.elspec);
+
+        if options.native % Reload native space coordinates
+            coords = ea_load_reconstruction(options);
+        else
+            coords = M.elstruct(pt).coords_mm;
+        end
+
+        vatCalcPassed = [0 0];
+        stimparams = struct();
+        if strcmp(M.S(pt).model, 'OSS-DBS (Butenko 2020)')
+            if options.prefs.machine.vatsettings.butenko_calcAxonActivation
+                feval(ea_genvat,M.S(pt),options);
+                fprintf('\n');
+                warning('off', 'backtrace');
+                warning('OSS-DBS axon activation mode detect, skipping calc stats for %s!\n', options.patientname);
+                warning('on', 'backtrace');
+                continue;
+            else
+                [vatCalcPassed, stimparams] = feval(ea_genvat,M.S(pt),options);
+            end
+        else
+            for side=1:2
+                try
+                    [vtafv,vtavolume] = feval(ea_genvat,coords,M.S(pt),side,options,['gs_',M.guid],handles.leadfigure);
+                    vatCalcPassed(side) = 1;
+                catch
+                    vtafv=[];
+                    vtavolume=0;
+                    vatCalcPassed(side) = 0;
+                end
+                stimparams(1,side).VAT(1).VAT = vtafv;
+                stimparams(1,side).volume = vtavolume;
+            end
+        end
+
+        options.native=options.orignative; % restore
         setappdata(resultfig,'stimparams',stimparams(1,:));
     end
-    % this will add the volume stats (atlasIntersections) to stats file:
-    ea_showfibers_volume(resultfig,options);
-
+    % Calc VAT stats (atlas intersection and volume)
+    if all(vatCalcPassed)
+        ea_calc_vatstats(resultfig,options);
+    else
+        try
+            ea_error(sprintf(['An error occured when building the VTA mesh/headmodel for %s.\n',...
+                'Try re-calculating this VTA with a different atlas or with no atlas.'],...
+                options.patientname));
+        catch
+            continue;
+        end
+    end
 
     % Step 3: Re-calculate connectivity from VAT to rest of the brain.
-    if ~strcmp(mod,'Do not calculate connectivity stats')
-
+    if all(vatCalcPassed) && ~strcmp(mod,'Do not calculate connectivity stats')
         % Convis part:
         parcs=get(handles.labelpopup,'String');
         selectedparc=parcs{get(handles.labelpopup,'Value')};
@@ -1061,6 +1092,7 @@ for pt=selection
             ea_cvshowvatdmri(resultfig,directory,{fibersfile,'gs'},selectedparc,options);
         end
     end
+
     close(resultfig);
 
     if processlocal % gather stats and recos to M
@@ -1073,7 +1105,9 @@ for pt=selection
         setappdata(gcf,'M',M);
 
         save([M.ui.groupdir,'LEAD_groupanalysis.mat'],'M','-v7.3');
-        try	movefile([options.root,options.patientname,filesep,'LEAD_scene.fig'],[M.ui.groupdir,'LEAD_scene_',num2str(pt),'.fig']); end
+        try
+            movefile([options.root,options.patientname,filesep,'LEAD_scene.fig'],[M.ui.groupdir,'LEAD_scene_',num2str(pt),'.fig']);
+        end
         %rmdir([M.ui.groupdir,'tmp'],'s');
     end
 end
@@ -1102,14 +1136,12 @@ else
     connChanged = 1;
 end
 
-M.ui.fiberspopup=get(handles.fiberspopup,'Value');
-M.ui.connectomename=get(handles.fiberspopup,'String');
-M.ui.connectomename=M.ui.connectomename{M.ui.fiberspopup};
+M.ui.connectomename = eventdata.Source.String{eventdata.Source.Value};
 setappdata(gcf,'M',M);
 
 ea_refresh_lg(handles);
 
-if connChanged
+if ~isempty(M.patient.list) && connChanged
     set(handles.calculatebutton, 'BackgroundColor', [0.1;0.8;0.1]);
     set(handles.explorestats, 'Enable', 'off');
     set(handles.exportstats, 'Enable', 'off');
@@ -1139,18 +1171,24 @@ function labelpopup_Callback(hObject, eventdata, handles)
 %        contents{get(hObject,'Value')} returns selected item from labelpopup
 M=getappdata(gcf,'M');
 
-if isfield(M.ui, 'labelpopup') && ...
-   eventdata.Source.Value == M.ui.labelpopup
-    labelChanged = 0;
-else
-    labelChanged = 1;
+labelChanged = 1;
+if isfield(M.ui, 'labelpopup')
+    if isnumeric(M.ui.labelpopup) % Old format, labelpopup is numeric
+        if eventdata.Source.Value == M.ui.labelpopup
+            labelChanged = 0;
+        end
+    else % New format, labelpopup is labeling parcellation name
+        if strcmp(eventdata.Source.String{eventdata.Source.Value}, M.ui.labelpopup)
+            labelChanged = 0;
+        end
+    end
 end
 
-M.ui.labelpopup=get(handles.labelpopup,'Value');
+M.ui.labelpopup = eventdata.Source.String{eventdata.Source.Value};
 setappdata(gcf,'M',M);
 ea_refresh_lg(handles);
 
-if labelChanged
+if ~isempty(M.patient.list) && labelChanged
     set(handles.calculatebutton, 'BackgroundColor', [0.1;0.8;0.1]);
     set(handles.explorestats, 'Enable', 'off');
     set(handles.exportstats, 'Enable', 'off');
@@ -1180,18 +1218,24 @@ function atlassetpopup_Callback(hObject, eventdata, handles)
 %        contents{get(hObject,'Value')} returns selected item from atlassetpopup
 M=getappdata(gcf,'M');
 
-if isfield(M.ui, 'atlassetpopup') && ...
-   eventdata.Source.Value == M.ui.atlassetpopup
-    atlasChanged = 0;
-else
-    atlasChanged = 1;
+atlasChanged = 1;
+if isfield(M.ui, 'atlassetpopup')
+    if isnumeric(M.ui.atlassetpopup) % Old format, atlassetpopup is numeric
+        if eventdata.Source.Value == M.ui.atlassetpopup
+            atlasChanged = 0;
+        end
+    else % New format, atlassetpopup is atlas name
+        if strcmp(eventdata.Source.String{eventdata.Source.Value}, M.ui.atlassetpopup)
+            atlasChanged = 0;
+        end
+    end
 end
 
-M.ui.atlassetpopup=get(handles.atlassetpopup,'Value');
+M.ui.atlassetpopup = eventdata.Source.String{eventdata.Source.Value};
 setappdata(gcf,'M',M);
 ea_refresh_lg(handles);
 
-if atlasChanged
+if ~isempty(M.patient.list) && atlasChanged
     set(handles.calculatebutton, 'BackgroundColor', [0.1;0.8;0.1]);
     set(handles.explorestats, 'Enable', 'off');
     set(handles.exportstats, 'Enable', 'off');
@@ -1438,16 +1482,19 @@ switch choice
         M=getappdata(gcf,'M');
         ea_dispercent(0,'Detaching group file');
         for pt=1:length(M.patient.list)
-            slashes=strfind(M.patient.list{pt},'/');
-            if isempty(slashes)
-                slashes=strfind(M.patient.list{pt},'\');
-            end
-            ptname=M.patient.list{pt}(max(slashes)+1:end);
+            [~, ptname] = fileparts(M.patient.list{pt});
             if strcmp('Yes and copy localizations/VTAs please.',choice)
                 odir=[M.ui.groupdir,ptname,filesep];
                 ea_mkdir([odir,'stimulations']);
                 copyfile([M.patient.list{pt},filesep,'ea_reconstruction.mat'],[odir,'ea_reconstruction.mat']);
-                copyfile([M.patient.list{pt},filesep,'stimulations',filesep,'gs_',M.guid],[odir,'stimulations',filesep,'gs_',M.guid]);
+                if exist([M.patient.list{pt},filesep,'stimulations',filesep,ea_nt(0),'gs_',M.guid], 'dir')
+                    ea_mkdir([odir,'stimulations',filesep,ea_nt(0)])
+                    copyfile([M.patient.list{pt},filesep,'stimulations',filesep,ea_nt(0),'gs_',M.guid],[odir,'stimulations',filesep,ea_nt(0),'gs_',M.guid]);
+                end
+                if exist([M.patient.list{pt},filesep,'stimulations',filesep,ea_nt(1),'gs_',M.guid], 'dir')
+                    ea_mkdir([odir,'stimulations',filesep,ea_nt(1)])
+                    copyfile([M.patient.list{pt},filesep,'stimulations',filesep,ea_nt(1),'gs_',M.guid],[odir,'stimulations',filesep,ea_nt(1),'gs_',M.guid]);
+                end
             end
 
             M.patient.list{pt}=ptname;
@@ -1690,16 +1737,6 @@ function specify3doptions_Callback(hObject, eventdata, handles)
 ea_lg_3dsetting(handles.leadfigure)
 
 
-% --- Executes on button press in targetreport.
-function targetreport_Callback(hObject, eventdata, handles)
-% hObject    handle to targetreport (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-ea_refresh_lg(handles);
-M=getappdata(gcf,'M');
-ea_gentargetreport(M);
-
-
 % --- Executes on button press in exportstats.
 function exportstats_Callback(hObject, eventdata, handles)
 % hObject    handle to exportstats (see GCBO)
@@ -1707,5 +1744,7 @@ function exportstats_Callback(hObject, eventdata, handles)
 % handles    structure with handles and user data (see GUIDATA)
 M = getappdata(gcf,'M');
 [file, path] = uiputfile('*.mat','Export DBS Stats as...', [M.root, 'ea_stats_export.mat']);
-ea_lg_exportstats(M, [path, file]);
-fprintf('\nDBS Stats exported to:\n%s\n\n', [path, file]);
+if file % make sure user didnt press cancel
+    ea_lg_exportstats(M, [path, file]);
+    fprintf('\nDBS Stats exported to:\n%s\n\n', [path, file]);
+end

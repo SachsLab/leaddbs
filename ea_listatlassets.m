@@ -14,7 +14,9 @@ if options.prefs.env.dev
     atlases{end+1}='Segment patient anatomy';
 end
 
-atlases{end+1}='Use none';
+if ~(isfield(handles, 'output') && strcmp(get(handles.output,'Name'),'FEM-based VAT model setting'))
+    atlases{end+1}='Use none';
+end
 
 natlases=cell(0);
 if mninative==2
@@ -22,7 +24,7 @@ if mninative==2
         % sweep pt dir for atlases
         natlases=dir([get(handles.patdir_choosebox,'String'),filesep,'atlases',filesep]);
         natlases = {natlases(cell2mat({natlases.isdir})).name};
-        natlases = natlases(cellfun(@(x) ~strcmp(x(1),'.'), natlases)); 
+        natlases = natlases(cellfun(@(x) ~strcmp(x(1),'.'), natlases));
         natlases = cellfun(@(x) {['Local atlas: ', x]}, natlases);
     end
 end
@@ -33,7 +35,7 @@ catch
     keyboard
 end
 
-[~,defix]=ismember(options.prefs.atlases.default,[atlases,natlases]);
+[~,defix]=ismember(options.prefs.machine.defaultatlas,[atlases,natlases]);
 if defix
     set(handles.atlassetpopup,'Value',defix);
 end

@@ -14,17 +14,14 @@ function  [coords_mm,trajectory,markers,elmodel,manually_corrected,coords_acpc]=
 
 coords_acpc=nan; % make sure the output is there.
 if isstruct(varargin{1})
-
     options=varargin{1};
-    
     directory=[options.root,options.patientname,filesep];
-
 else
     directory=varargin{1};
     if ~strcmp(directory(end),filesep)
         directory=[directory,filesep];
     end
-    options=ea_getptopts(directory);    
+    options=ea_getptopts(directory);
 end
 try
     % Load Reconstruction
@@ -41,24 +38,23 @@ if exist('reco','var')
     end
 
     if options.native
-        if isfield(options, 'loadrecoforviz') && isfield(reco, 'scrf')
-            % if loading reco for visualization, should return scrf.
-            space_type = 'scrf';
-        else
+        if isfield(options, 'loadnativereco') && options.loadnativereco || ~isfield(reco, 'scrf')
+            % Load native reco for recalculation or manual reconstruction
             space_type = 'native';
+        else
+            % Load scrf reco by default
+            space_type = 'scrf';
         end
     else
         space_type = 'mni';
     end
 
-
     markers = reco.(space_type).markers;
     if ~isfield(markers,'x')
         for side=1:2
-            normtrajvector=(markers(side).tail-markers(side).head)./norm(markers(side).tail-markers(side).head);
-            orth=null(normtrajvector)*(options.elspec.lead_diameter/2);
-            markers(side).x=markers(side).head+orth(:,1)';
-            markers(side).y=markers(side).head+orth(:,2)'; % corresponding points in reality
+            [xunitv, yunitv] = ea_calcxy(markers(side).head, markers(side).tail);
+            markers(side).x = markers(side).head+xunitv*(options.elspec.lead_diameter/2);
+            markers(side).y = markers(side).head+yunitv*(options.elspec.lead_diameter/2);
         end
     end
 
@@ -84,10 +80,11 @@ if exist('reco','var')
         manually_corrected=reco.props(options.elside).manually_corrected;
         elmodel=reco.props(options.elside).elmodel;
     catch % legacy
-        manually_corrected=reco.props(1).manually_corrected;
-        elmodel=reco.props(1).elmodel;
+        [elmodel,first_notempty_side]=ea_get_first_notempty_elmodel(reco.props);
+        manually_corrected=reco.props(first_notempty_side).manually_corrected;
     end
 
+    %if elmodel is empty, search for the first available side that has a model
     if isempty(elmodel)
         for side=1:length(reco.props)
             elmodel=reco.props(side).elmodel;
@@ -102,13 +99,14 @@ else % legacy format
         options=ea_getptopts(directory,options);
     end
     if ~exist('markers','var') % backward compatibility to old recon format
-        for side=1:options.sides
+        for iside=1:length(options.sides)
+            side=options.sides(iside);
+
             markers(side).head=coords_mm{side}(1,:);
             markers(side).tail=coords_mm{side}(4,:);
-            normtrajvector=(markers(side).tail-markers(side).head)./norm(markers(side).tail-markers(side).head);
-            orth=null(normtrajvector)*(options.elspec.lead_diameter/2);
-            markers(side).x=coords_mm{side}(1,:)+orth(:,1)';
-            markers(side).y=coords_mm{side}(1,:)+orth(:,2)'; % corresponding points in reality
+            [xunitv, yunitv] = ea_calcxy(markers(side).head, markers(side).tail);
+            markers(side).x = coords_mm{side}(1,:)+xunitv*(options.elspec.lead_diameter/2);
+            markers(side).y = coords_mm{side}(1,:)+yunitv*(options.elspec.lead_diameter/2);
         end
 
         elmodel=options.elmodel;

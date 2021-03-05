@@ -1,5 +1,8 @@
-function fv=ea_fem_getmask(options)
+function fv=ea_fem_getmask(options,nosmooth)
 
+if ~exist('nosmooth','var')
+   nosmooth=0;
+end
 % load nifti
 try
     switch options.native
@@ -17,18 +20,15 @@ end
 
 [xx,yy,zz]=ind2sub(size(nii.img),find(nii.img>0)); %(mean(nii.img(nii.img~=0))/3))); % find 3D-points that have correct value.
 if isempty(xx)
-fv.vertices=[]; % no gray matter.
-fv.faces=[];
-return
+    fv.vertices=[]; % no gray matter.
+    fv.faces=[];
+    return
 end
-XYZ=[xx,yy,zz]; % concatenate points to one matrix.
-XYZ=nii.mat*[XYZ,ones(length(xx),1)]'; % map to mm-space
-XYZ=XYZ(1:3,:)';
+XYZ = [xx,yy,zz]; % concatenate points to one matrix.
+XYZ = ea_vox2mm(XYZ,nii.mat);
 
-bb=[0,0,0,1;size(nii.img),1];
-
-bb=nii.mat*bb';
-bb=bb(1:3,:)';
+bb=[1,1,1;size(nii.img)];
+bb=ea_vox2mm(bb,nii.mat);
 gv=cell(3,1);
 for dim=1:3
     gv{dim}=linspace(bb(1,dim),bb(2,dim),size(nii.img,dim));
@@ -42,8 +42,9 @@ fvc=isocaps(X,Y,Z,permute(nii.img,[2,1,3]),max(nii.img(:))/2);
 fv.faces=[fv.faces;fvc.faces+size(fv.vertices,1)];
 fv.vertices=[fv.vertices;fvc.vertices];
 
-fv=ea_smoothpatch(fv,[],ceil(options.prefs.hullsmooth/2));
-
+if ~nosmooth
+    fv=ea_smoothpatch(fv,[],ceil(options.prefs.hullsmooth/2));
+end
 
 % figure
 % patch('vertices',fv.vertices,'faces',fv.faces,'facecolor','r');

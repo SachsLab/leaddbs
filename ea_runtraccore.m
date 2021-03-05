@@ -3,13 +3,15 @@ function [coords_mm,trajectory,markers]=ea_runtraccore(options)
 directory = [options.root,options.patientname,filesep];
 
 if exist([options.root,options.patientname,filesep,'ea_reconstruction.mat'],'file')
-   [coords_mm,trajectory,markers]=ea_load_reconstruction(options);
+    options.native = 0; % Load MNI reco
+    [coords_mm,trajectory,markers]=ea_load_reconstruction(options);
 end
+
 if isempty(options.sides)
     return
 end
-% build lfile
 
+% build lfile
 fis={[ea_space,'bb.nii']};
 switch options.modality
     case 1 % MR
@@ -21,9 +23,6 @@ switch options.modality
         fis=[fis;{[directory,options.prefs.gctnii]}];
 end
 
-% if exist([directory,options.prefs.gsagnii],'file')
-%     fis=[fis;{[directory,options.prefs.gsagnii]}];
-% end
 matlabbatch{1}.spm.util.imcalc.input = fis;
 matlabbatch{1}.spm.util.imcalc.output = [directory,'lpost.nii'];
 matlabbatch{1}.spm.util.imcalc.outdir = {directory};
@@ -38,7 +37,6 @@ clear matlabbatch
 lnii=ea_load_untouch_nii([directory,'lpost.nii']);
 
 for side=options.sides
-
     %try
     % call main routine reconstructing trajectory for one side.
     [coords,trajvector{side},trajectory{side},tramat]=ea_reconstruct(options.patientname,options,side,lnii);
@@ -57,24 +55,23 @@ for side=options.sides
     for electrode=2:4
         coords_mm{side}(electrode,:)=coords_mm{side}(1,:)-normtrajvector{side}.*((electrode-1)*distmm);
     end
+
     markers(side).head=coords_mm{side}(1,:);
     markers(side).tail=coords_mm{side}(4,:);
 
-    orth=null(normtrajvector{side})*(options.elspec.lead_diameter/2);
-
-    markers(side).x=coords_mm{side}(1,:)+orth(:,1)';
-    markers(side).y=coords_mm{side}(1,:)+orth(:,2)'; % corresponding points in reality
+    [xunitv, yunitv] = ea_calcxy(markers(side).head, markers(side).tail);
+    markers(side).x = coords_mm{side}(1,:) + xunitv*(options.elspec.lead_diameter/2);
+    markers(side).y = coords_mm{side}(1,:) + yunitv*(options.elspec.lead_diameter/2);
 
     coords_mm=ea_resolvecoords(markers,options);
 end
 
 % transform trajectory to mm space:
-for side=1:length(options.sides)
+for side=options.sides
     try
         if ~isempty(trajectory{side})
             trajectory{side}=ea_map_coords(trajectory{side}', [directory,'lpost.nii'])';
         end
-
     end
 end
 

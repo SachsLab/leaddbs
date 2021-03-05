@@ -296,7 +296,7 @@ for branch=1:length(sels.branches) % Hemisphere
 end
 
 
-function sidec=getsidec(sel,side)
+function sidec=getsidec(sel,side,type)
 
 if sel==2
     switch side
@@ -306,7 +306,14 @@ if sel==2
             sidec='_left';
     end
 elseif sel==1
-    sidec='_midline';
+    switch type
+        case 1
+            sidec='_right';
+        case 2
+            sidec='_left';
+        case 5
+            sidec='_midline';
+    end
 end
 
 
@@ -428,7 +435,7 @@ for branch=1:length(sels.branches)
     for leaf=1:length(sels.leaves{branch})
         for side=1:length(sels.sides{branch}{leaf})
 
-            sidec=getsidec(length(sels.sides{branch}{leaf}),side);
+            sidec=getsidec(length(sels.sides{branch}{leaf}),side,atlases.types(leaf));
 
             %[ixs,ixt]=getsubindex(h.sgsub{branch}{leaf},sidec,h.atlassurfs,h.togglebuttons);
 
@@ -506,23 +513,23 @@ for branch=1:length(sels.branches)
     for leaf=1:length(sels.leaves{branch})
         for side=1:length(sels.sides{branch}{leaf})
 
-            sidec=getsidec(length(sels.sides{branch}{leaf}),side);
+            sidec=getsidec(length(sels.sides{branch}{leaf}),side,atlases.types(leaf));
             [ixs,ixt]=ea_getsubindex(h.sgsub{branch}{leaf}.toString,sidec,h.atlassurfs,h.togglebuttons,h.uselabelname,h.atlases);
 
             if ismember(char(h.sgsubfi{branch}{leaf}),onatlasnames)
-                h.atlassurfs(ixs).Visible='on';
+                h.atlassurfs{ixs}.Visible='on';
                 if strcmp(h.labelbutton.State, 'on')
                     h.atlaslabels(ixs).Visible='on';
                 end
                 h.togglebuttons(ixt).State='on';
             elseif ismember(char(h.sgsubfi{branch}{leaf}),offatlasnames)
-                h.atlassurfs(ixs).Visible='off';
+                h.atlassurfs{ixs}.Visible='off';
                 h.atlaslabels(ixs).Visible='off';
                 h.togglebuttons(ixt).State='off';
             else % not explicitly mentioned
                 switch preset.default
                     case 'absolute'
-                        h.atlassurfs(ixs).Visible='off';
+                        h.atlassurfs{ixs}.Visible='off';
                         h.atlaslabels(ixs).Visible='off';
                         h.togglebuttons(ixt).State='off';
                     case 'relative'
@@ -570,7 +577,7 @@ options=getappdata(handles.cortexselect,'options');
 % surfaces
 atlassurfs=getappdata(resultfig,'atlassurfs');
 for atl=1:numel(atlassurfs)
-    delete(atlassurfs(atl))
+    delete(atlassurfs{atl})
 end
 
 % labels

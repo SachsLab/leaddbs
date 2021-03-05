@@ -80,13 +80,6 @@ set(handles.ymm,'String',num2str(ymm,'%.2f'));
 set(handles.zmm,'String',num2str(zmm,'%.2f'));
 set(handles.matseed,'ForegroundColor',[0,0,0]);
 
-% dev
-if options.prefs.env.dev
-    set(handles.savefibers,'Visible','on')
-else
-    set(handles.savefibers,'Visible','off')
-end
-
 
 function refreshcv(varargin)
 handles=varargin{1};
@@ -226,7 +219,7 @@ if get(handles.wmatmodality,'Value')>length(get(handles.wmatmodality,'String'))
 end
 
 mods=get(handles.wmatmodality,'String');
-if ~strcmp('Choose...',mods{get(handles.wmatmodality,'Value')});
+if ~strcmp('Choose...',mods{get(handles.wmatmodality,'Value')})
     set(handles.chosenwmatstr,'String','');
     set(handles.chosenwmatstr,'TooltipString','');
 end
@@ -531,10 +524,11 @@ function ea_initvatlevel(handles,directory,selectedparc,options)
 modlist=ea_genmodlist(directory,selectedparc,options);
 
 %% VATs:
-vdirs=dir([directory,'stimulations',filesep,ea_nt(options)]);
+
+vdirs=dir([directory,filesep,'stimulations',filesep,ea_nt(options)]);
 cnt=1;
-vdicell=cell(0);
-for vdir=1:length(vdirs)
+vdicell=cell(0); %empty cell
+for vdir=1:length(vdirs) 
     if vdirs(vdir).isdir && ~strcmp(vdirs(vdir).name(1),'.')
         vdicell{cnt}=vdirs(vdir).name;
         cnt=cnt+1;
@@ -570,7 +564,7 @@ else
 
     %% check if left/right VATs are present
     stimfolder=vdicell{get(handles.vatseed,'Value')};
-    vatdir=dir([directory,'stimulations',filesep,ea_nt(options),stimfolder,filesep,'*.nii']);
+    vatdir=dir([directory,filesep,'stimulations',filesep,ea_nt(options),stimfolder,filesep,'*.nii']);
     for vt=1:length(vatdir)
         vatcell{vt}=vatdir(vt).name;
     end
@@ -1204,14 +1198,6 @@ function rvatcheck_Callback(hObject, eventdata, handles)
 
 % Hint: get(hObject,'Value') returns toggle state of rvatcheck
 refreshcv(handles);
-
-
-function coords=map_coords_proxy(XYZ,V)
-
-XYZ=[XYZ';ones(1,size(XYZ,1))];
-
-coords=V.mat*XYZ;
-coords=coords(1:3,:)';
 
 
 function wmatthresh_Callback(hObject, eventdata, handles)

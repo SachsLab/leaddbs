@@ -68,7 +68,7 @@ set(handles.ethresh,'String',num2str(prefs.machine.vatsettings.horn_ethresh));
 set(handles.useatlas,'Value',prefs.machine.vatsettings.horn_useatlas);
 ea_refreshgmwm(handles);
 options=ea_defaultoptions;
-options.prefs.atlases.default=prefs.machine.vatsettings.horn_atlasset;
+options.prefs.machine.defaultatlas=prefs.machine.vatsettings.horn_atlasset;
 ea_listatlassets(options,handles,1);
 
 set(handles.removeElectrode,'Value',prefs.machine.vatsettings.horn_removeElectrode);
@@ -108,7 +108,7 @@ etv={'E-Field Threshold Presets:',nan
     'D = 3.5 um, 90 us (Astrom 2014)',0.142
     'D = 3.5 um, 120 us (Astrom 2014)',0.121
     'D = 4.0 um, 30 us (Astrom 2014)',0.240
-    'D = 4.0 um, 60 us (Astrom 2014)',0.250
+    'D = 4.0 um, 60 us (Astrom 2014)',0.150
     'D = 4.0 um, 90 us (Astrom 2014)',0.115
     'D = 4.0 um, 120 us (Astrom 2014)',0.096
     'D = 4.5 um, 30 us (Astrom 2014)',0.225

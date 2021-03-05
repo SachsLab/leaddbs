@@ -36,7 +36,7 @@ try
         % file name starting with '.' is not a valid function/script name, so
         % copy it to a temp file and then run it.
         tempPrefs = ['ea_prefs_', strrep(ea_generate_uuid, '-', '_')];
-        copyfile([home, '.ea_prefs.m'], [ea_getearoot, tempPrefs, '.m']);
+        copyfile([home, '.ea_prefs.m'], [ea_getearoot, tempPrefs, '.m'],'f');
         uprefs = feval(tempPrefs, patientname);
         delete([ea_getearoot, tempPrefs, '.m']);
         umachine = load([home, '.ea_prefs.mat']);
@@ -45,8 +45,8 @@ try
         uprefs = jsondecode(fread(fid,'*char')'); fclose(fid);
         umachine = load([home, '.ea_prefs.mat']);
     end
-catch
-    warning('User preferences file could not be read. Please set write permissions to Lead-DBS install directory accordingly.');
+catch ME
+    warning(ME.message);
     return
 end
 
@@ -60,8 +60,6 @@ prefs = combinestructs(dprefs, uprefs);
 if strcmp(context, 'normal')
     prefs.machine = combinestructs(dmachine.machine, umachine.machine);
 end
-
-
 
 % legacy code support for gl/l normalized file differentiation:
 prefs.prenii=prefs.gprenii;

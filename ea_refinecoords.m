@@ -37,9 +37,10 @@ function [coords_mm,trajectory,markers] = ea_refinecoords(options)
     if ~can_export
         disp('Set prefs.reco.exportfiducials in preference file to export fiducial markers as CSV file.');
     end
-    options.native = 1; % not sure if correct to do this
-    [coords_mm,trajectory,markers,elmodel,~]=ea_load_reconstruction(options);
 
+    options.native = 1;
+    options.loadnativereco = 1; % Load native reco intead of scrf
+    [coords_mm,trajectory,markers,elmodel,~]=ea_load_reconstruction(options);
 
     switch options.modality
         case 1 % MR
@@ -50,7 +51,7 @@ function [coords_mm,trajectory,markers] = ea_refinecoords(options)
     end
 
 
-    for side = options.sides(1):options.sides(end)
+    for side = options.sides
         options.elside = side;
         meantrajectory = genhd_inside(trajectory{side});
         imat = ea_resample_planes(V, meantrajectory', sample_width, doxx, 0.2);

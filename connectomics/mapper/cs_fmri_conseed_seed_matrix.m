@@ -134,6 +134,7 @@ for s=1:size(sfile,1)
 
         sweightidx{s,lr}=find(sweights);
         sweightidxmx{s,lr}=double(sweightmx(sweightidx{s,lr},:));
+        sweightidxmx{s,lr}=sweightidxmx{s,lr}./sum(sweightidxmx{s,lr});
     end
 end
 
@@ -166,7 +167,16 @@ else
 end
 
 if ~exist('db','var')
-    db=matfile([dfold,'fMRI',filesep,cname,filesep,'AllX.mat']);
+    db=matfile([dfold,'fMRI',filesep,cname,filesep,'AllX.mat'],'Writable',false);
+    probe=db.X(1,1);
+    switch class(probe)
+        case 'int16'
+            needdivide=1;
+        case {'single','double'}
+            needdivide=0;
+        otherwise
+            ea_error('File format not supported');
+    end
 end
 
 disp('Iterating through subjects...');
@@ -177,12 +187,29 @@ for subj = 1:numSubUse % iterate across subjects
     for s=1:numseed
         for run=1:howmanyruns
             Rw=nan(length(sweightidx{s}),pixdim);
-
-            for ix=1:length(sweightidx{s})
-                Rw(ix,:)=db.X(sweightidx{s}(ix),:);
+            ea_dispercent(0,'Parsing connectome');
+            queryfrom=1;
+            while 1 % only possible via loop given matfile mapping restrictions, querying as efficiently as possible.
+                queryuntil=queryfrom;
+                for queryinterval=1:length(sweightidx{s})-queryfrom
+                    if ~isequal(sweightidx{s}(queryfrom)+queryinterval,sweightidx{s}(queryfrom+queryinterval)) % check if continuous
+                       break
+                    end
+                    queryuntil=queryfrom+queryinterval;
+                end
+                Rw(queryfrom:queryuntil,:)=db.X(sweightidx{s}(queryfrom:queryuntil),1:pixdim);
+                ea_dispercent(queryuntil/length(sweightidx{s}));
+                queryfrom=queryuntil+1;
+                if queryfrom>length(sweightidx{s})
+                    break
+                end
             end
-            Rw=mean(Rw,1);
-            Rw=Rw/(2^15);
+            ea_dispercent(1,'end');
+            if needdivide
+                Rw=Rw/(2^15); % convert to actual R values
+            end
+            Rw=Rw.*repmat(sweightidxmx{s},1,pixdim); % map weights of seed to entries
+            Rw=sum(Rw,1); % sum is fine since sum of sweightidxmx{s} == 1
         end
 
         mmap=dataset.vol.space;
@@ -201,19 +228,6 @@ end
 disp('Done.');
 
 toc
-
-
-function s=ea_conformseedtofmri(dataset,s)
-td=tempdir;
-dataset.vol.space.fname=[td,'tmpspace.nii'];
-ea_write_nii(dataset.vol.space);
-s.fname=[td,'tmpseed.nii'];
-ea_write_nii(s);
-
-ea_conformspaceto([td,'tmpspace.nii'],[td,'tmpseed.nii']);
-s=ea_load_nii(s.fname);
-delete([td,'tmpspace.nii']);
-delete([td,'tmpseed.nii']);
 
 
 function howmanyruns=ea_cs_dethowmanyruns(dataset,mcfi)

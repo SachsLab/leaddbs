@@ -229,6 +229,7 @@ if ~options.savefibers.load
                 if options.groupmode
                     stimparams.label=['gs_',options.groupid];
                 end
+                
             end
             [ea_stats,thisstim]=ea_assignstimcnt(ea_stats,stimparams);
             ea_stats.stimulation(thisstim).ft(side).fibercounts{la}=howmanyfibs{side}/numtotalfibs;
@@ -333,7 +334,8 @@ if options.writeoutpm
 end
 
 % plot fibers that do connect to seed:
-for side=1:length(options.sides)
+for iside=1:length(options.sides)
+    side=options.sides(iside);
     if ~isempty(connectingfibs{side})
         % Remove single point
         single = cellfun(@(x) all(size(x)==[1,3]),connectingfibs{side});
@@ -474,10 +476,6 @@ end
 function C=rgb(C) % returns rgb values for the colors.
 
 C = rem(floor((strfind('kbgcrmyw', C) - 1) * [0.25 0.5 1]), 2);
-
-
-function str=sub2space(str) % replaces subscores with spaces
-str(str=='_')=' ';
 
 
 function in = inhull(testpts,xyz,tess,tol)
@@ -708,14 +706,6 @@ switch val
     case 0
         str='off';
 end
-
-
-function coords=map_coords_proxy(XYZ,V)
-
-XYZ=[XYZ';ones(1,size(XYZ,1))];
-
-coords=V.mat*XYZ;
-coords=coords(1:3,:)';
 
 
 function hn=ea_arrow3(p1,p2,s,w,h,ip,alpha,beta)
